@@ -18,9 +18,11 @@ package main
  */
 
 import (
+	"bufio"
 	"fmt"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"os"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
 func main() {
@@ -37,28 +39,30 @@ func main() {
 	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": broker})
 
 	if err != nil {
-		fmt.Printf("Failed to create producer: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create producer: %s\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Created Producer %v\n", p)
+	fmt.Fprintf(os.Stderr, "Created Producer %v\n", p)
 
 	// Optional delivery channel, if not specified the Producer object's
 	// .Events channel is used.
 	deliveryChan := make(chan kafka.Event)
-
-	value := "Hello Go!"
-	err = p.Produce(&kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Value: []byte(value)}, deliveryChan)
-
-	e := <-deliveryChan
-	m := e.(*kafka.Message)
-
-	if m.TopicPartition.Error != nil {
-		fmt.Printf("Delivery failed: %v\n", m.TopicPartition.Error)
-	} else {
-		fmt.Printf("Delivered message to topic %s [%d] at offset %v\n",
-			*m.TopicPartition.Topic, m.TopicPartition.Partition, m.TopicPartition.Offset)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		value := scanner.Text()
+		err = p.Produce(&kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+			Value: []byte(value)}, deliveryChan)
+		e := <-deliveryChan
+		m := e.(*kafka.Message)
+		if m.TopicPartition.Error != nil {
+			fmt.Fprintf(os.Stderr, "Delivery failed: %v\n", m.TopicPartition.Error)
+		} else {
+			/*
+			   fmt.Fprintf(os.Stderr, "Delivered message to topic %s [%d] at offset %v\n",
+			     *m.TopicPartition.Topic, m.TopicPartition.Partition, m.TopicPartition.Offset)
+			*/
+		}
 	}
-
 	close(deliveryChan)
 }
