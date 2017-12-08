@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"github.com/linkedin/goavro"
 	"bytes"
+	"encoding/json"
 )
 
 var (
@@ -176,7 +177,35 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						bail(err)
 					}
 					codec := ocf.Codec()
-					fmt.Fprintf(os.Stderr, "Schema (avro.schema):\n%s\n", codec.Schema())
+					var schemaStr string
+					schemaStr = codec.Schema()
+					fmt.Fprintf(os.Stderr, "Schema Str (avro.schema):\n%s\n", schemaStr)
+					var schema map[string]interface{}
+					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+						bail(err)
+					}
+					colNames := strings.Split(schema["doc"].(string), "|")
+					fmt.Fprintf(os.Stderr, "colNames: %v\n", colNames)
+					colsWithTypes := schema["fields"].([]interface{})
+					for _, val := range colsWithTypes {
+						colMeta := val.(map[string]interface{})
+						colName := colMeta["name"]
+						colTypeTmp := colMeta["type"]
+						var colType string
+						switch t := colTypeTmp.(type) {
+						case string:
+							colType = colTypeTmp.(string)
+						case []interface{}:
+							s := make([]string, len(t))
+							for i, v := range t {
+								s[i] = fmt.Sprint(v)
+							}
+							colType = s[0]
+						default:
+							fmt.Fprintf(os.Stderr, "colType UNKNOWN: %v\n", colTypeTmp)
+						}
+						fmt.Fprintf(os.Stderr, "Column: \"%s\" => %s\n", colName, colType)
+					}
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
