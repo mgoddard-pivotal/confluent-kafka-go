@@ -41,6 +41,16 @@ var (
 	isAvro       = false
 )
 
+var avroToSqlType = map[string]string{
+	"boolean": "BOOL",
+	"int": "INT",
+	"long": "BIGINT",
+	"float": "FLOAT4",
+	"double": "FLOAT8",
+	"bytes": "BYTEA",
+	"string": "TEXT",
+}
+
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 	p, err := kafka.NewProducer(config)
 	if err != nil {
@@ -170,6 +180,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				// MIKE: Here's where we dump the message.
 				if isAvro {
+						
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
@@ -184,10 +195,12 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
 						bail(err)
 					}
+					// The "namespace" field contains the table name
+					tableName := schema["namespace"].(string)
+					fmt.Fprintf(os.Stderr, "Table name: %s\n", tableName)
 					// The "doc" field is assumed to contain a pipe-separated list of column names
 					tmpColNames := strings.Split(schema["doc"].(string), "|")
 					colNames := make([]string, len(tmpColNames))
-					//var colNameToType map[string]string
 					colNameToType := make(map[string]string)
 					fmt.Fprintf(os.Stderr, "colNames: %v\n", tmpColNames)
 					colsWithTypes := schema["fields"].([]interface{})
@@ -211,7 +224,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							fmt.Fprintf(os.Stderr, "colType UNKNOWN: %v\n", colTypeTmp)
 						}
 						colNameToType[colName.(string)] = colType
-						//fmt.Fprintf(os.Stderr, "Column: \"%s\" => %s\n", colName, colType)
 					}
 					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
