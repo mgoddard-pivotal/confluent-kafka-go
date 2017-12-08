@@ -170,7 +170,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				// MIKE: Here's where we dump the message.
 				if isAvro {
-					//fmt.Println(string(e.Value))
+					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
 					if err != nil {
@@ -184,14 +184,20 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
 						bail(err)
 					}
-					colNames := strings.Split(schema["doc"].(string), "|")
-					fmt.Fprintf(os.Stderr, "colNames: %v\n", colNames)
+					// The "doc" field is assumed to contain a pipe-separated list of column names
+					tmpColNames := strings.Split(schema["doc"].(string), "|")
+					colNames := make([]string, len(tmpColNames))
+					//var colNameToType map[string]string
+					colNameToType := make(map[string]string)
+					fmt.Fprintf(os.Stderr, "colNames: %v\n", tmpColNames)
 					colsWithTypes := schema["fields"].([]interface{})
 					for _, val := range colsWithTypes {
 						colMeta := val.(map[string]interface{})
 						colName := colMeta["name"]
+						colNames = append(colNames, colName.(string))
 						colTypeTmp := colMeta["type"]
 						var colType string
+						// This colTypeTmp could be either string or array of string
 						switch t := colTypeTmp.(type) {
 						case string:
 							colType = colTypeTmp.(string)
@@ -204,8 +210,10 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						default:
 							fmt.Fprintf(os.Stderr, "colType UNKNOWN: %v\n", colTypeTmp)
 						}
-						fmt.Fprintf(os.Stderr, "Column: \"%s\" => %s\n", colName, colType)
+						colNameToType[colName.(string)] = colType
+						//fmt.Fprintf(os.Stderr, "Column: \"%s\" => %s\n", colName, colType)
 					}
+					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
