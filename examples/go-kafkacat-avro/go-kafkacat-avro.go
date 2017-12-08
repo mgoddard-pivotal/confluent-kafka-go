@@ -26,7 +26,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-  //"encoding/binary"
+	"github.com/linkedin/goavro"
+	"bytes"
 )
 
 var (
@@ -36,7 +37,7 @@ var (
 	partitionCnt = 0
 	keyDelim     = ""
 	sigs         chan os.Signal
-  isAvro       = false
+	isAvro       = false
 )
 
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
@@ -136,7 +137,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 
 	run := true
 
-  DONE:
 	for run == true {
 		select {
 
@@ -167,23 +167,20 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						fmt.Printf("%s", keyDelim)
 					}
 				}
-        // MIKE: Here's where we dump the message.
-        // For Avro: (a) no string() and (b) set run = false after each output
-        if isAvro {
-          run = false
-				  fmt.Println(string(e.Value))
-          //err := binary.Write(os.Stdout, binary.BigEndian, e.Value)
-          /*
-          err := binary.Write(os.Stdout, binary.LittleEndian, e.Value)
-	        if err != nil {
-		        fmt.Fprintf(os.Stderr, "binary.Write failed:", err)
-	        }
-          */
+				// MIKE: Here's where we dump the message.
+				if isAvro {
+					//fmt.Println(string(e.Value))
+					ior := bytes.NewReader(e.Value)
+					ocf, err := goavro.NewOCFReader(ior)
+					if err != nil {
+						bail(err)
+					}
+					codec := ocf.Codec()
+					fmt.Fprintf(os.Stderr, "Schema (avro.schema):\n%s\n", codec.Schema())
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
-          break DONE
-        } else {
-				  fmt.Println(string(e.Value))
-        }
+				} else {
+					fmt.Println(string(e.Value))
+				}
 			case kafka.PartitionEOF:
 				fmt.Fprintf(os.Stderr, "%% Reached %v\n", e)
 				eofCnt++
@@ -258,7 +255,7 @@ func main() {
 	verbosity = *verbosityArg
 	keyDelim = *keyDelimArg
 	exitEOF = *exitEOFArg
-  isAvro = *avroArg
+	isAvro = *avroArg
 	confargs.conf["bootstrap.servers"] = *brokers
 
 	switch mode {
@@ -274,4 +271,9 @@ func main() {
 		runConsumer((*kafka.ConfigMap)(&confargs.conf), *topics)
 	}
 
+}
+
+func bail(err error) {
+	fmt.Fprintf(os.Stderr, "%s\n", err)
+	os.Exit(1)
 }
