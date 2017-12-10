@@ -136,8 +136,9 @@ func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 	p.Close()
 }
 
-// MIKE: Modify this for Avro
+// TODO: Modify this for Avro
 func runConsumer(config *kafka.ConfigMap, topics []string) {
+	
 	c, err := kafka.NewConsumer(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create consumer: %s\n", err)
@@ -255,20 +256,19 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 	c.Close()
 }
 	
-//func avroToCsv (ocf *goavro.OCFReader) string {
 func avroToCsv (ocf *goavro.OCFReader) {
-	fmt.Fprintf(os.Stderr, "In avroToCsv\n") // Called 4x
+	//fmt.Fprintf(os.Stderr, "In avroToCsv\n")
 	codec := ocf.Codec()
 	for ocf.Scan() {
-		fmt.Fprintf(os.Stderr, "In avroToCsv -> ocf.Scan\n") // 4000x
+		//fmt.Fprintf(os.Stderr, "In avroToCsv -> ocf.Scan\n")
 		datum, err := ocf.Read()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "avroToCsv() %s\n", err)
+			fmt.Fprintf(os.Stderr, "ERROR: avroToCsv() %s\n", err)
 			continue
 		}
 		buf, err := codec.TextualFromNative(nil, datum)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "avroToCsv() %s\n", err)
+			fmt.Fprintf(os.Stderr, "ERROR: avroToCsv() %s\n", err)
 			continue
 		}
 		// HERE: buf contains a single line of JSON, a single JSON document
