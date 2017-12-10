@@ -19,16 +19,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/linkedin/goavro"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"github.com/linkedin/goavro"
-	"bytes"
-	"encoding/json"
+	// "github.com/garyburd/redigo/redis"
 )
 
 var (
@@ -39,16 +40,17 @@ var (
 	keyDelim     = ""
 	sigs         chan os.Signal
 	isAvro       = false
+	gpXid        = ""
 )
 
 var avroToSqlType = map[string]string{
 	"boolean": "BOOL",
-	"int": "INT",
-	"long": "BIGINT",
-	"float": "FLOAT4",
-	"double": "FLOAT8",
-	"bytes": "BYTEA",
-	"string": "TEXT",
+	"int":     "INT",
+	"long":    "BIGINT",
+	"float":   "FLOAT4",
+	"double":  "FLOAT8",
+	"bytes":   "BYTEA",
+	"string":  "TEXT",
 }
 
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
@@ -180,7 +182,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				// MIKE: Here's where we dump the message.
 				if isAvro {
-						
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
@@ -226,6 +227,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						colNameToType[colName.(string)] = colType
 					}
 					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
+					avroToCsv(ocf) // This prints the CSV version
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
@@ -252,6 +254,28 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 	fmt.Fprintf(os.Stderr, "%% Closing consumer\n")
 	c.Close()
 }
+	
+//func avroToCsv (ocf *goavro.OCFReader) string {
+func avroToCsv (ocf *goavro.OCFReader) {
+	fmt.Fprintf(os.Stderr, "In avroToCsv\n") // Called 4x
+	codec := ocf.Codec()
+	for ocf.Scan() {
+		fmt.Fprintf(os.Stderr, "In avroToCsv -> ocf.Scan\n") // 4000x
+		datum, err := ocf.Read()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "avroToCsv() %s\n", err)
+			continue
+		}
+		buf, err := codec.TextualFromNative(nil, datum)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "avroToCsv() %s\n", err)
+			continue
+		}
+		// HERE: buf contains a single line of JSON, a single JSON document
+		// {"id":10022459,"description":{"string":"DOMESTIC BATTERY SIMPLE"},"community_area":{"string":"24"} ... }
+		fmt.Println(string(buf))
+	}
+}
 
 type configArgs struct {
 	conf kafka.ConfigMap
@@ -269,6 +293,7 @@ func (c *configArgs) IsCumulative() bool {
 	return true
 }
 
+// TODO: Replace kingpin with flag (https://gobyexample.com/command-line-flags)
 func main() {
 	sigs = make(chan os.Signal)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -306,6 +331,9 @@ func main() {
 	exitEOF = *exitEOFArg
 	isAvro = *avroArg
 	confargs.conf["bootstrap.servers"] = *brokers
+	
+	gpXid = os.Getenv("GP_XID")
+	fmt.Fprintf(os.Stderr, "partition: %d, GP_XID: %s\n", *partition, gpXid)
 
 	switch mode {
 	case "produce":
