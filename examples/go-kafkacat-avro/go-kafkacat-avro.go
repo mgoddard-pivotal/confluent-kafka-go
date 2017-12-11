@@ -29,7 +29,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	// "github.com/garyburd/redigo/redis"
+	"github.com/garyburd/redigo/redis"
 )
 
 var (
@@ -42,6 +42,8 @@ var (
 	isAvro       = false
 	gpXid        = ""
 	outputDelim	 = ","
+	redisPort	 = 6379
+	redisConn 	 redis.Conn
 )
 
 var avroToSqlType = map[string]string{
@@ -188,6 +190,15 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				// MIKE: Here's where we dump the message.
 				if isAvro {
+					if redisConn == nil {
+						//redisConn, err = redis.DialURL("redis://" + os.Getenv("GP_MASTER_HOST") + ":" + string(redisPort))
+						//redisConn, err = redis.DialURL("redis://localhost:6379")
+						redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
+						if err != nil {
+							bail(err)
+						}
+						defer redisConn.Close()
+					}
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
@@ -197,7 +208,11 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					codec := ocf.Codec()
 					var schemaStr string
 					schemaStr = codec.Schema()
-					fmt.Fprintf(os.Stderr, "Schema Str (avro.schema):\n%s\n", schemaStr)
+					colNamesAggRedis, err := redisConn.Do("GET", schemaStr)
+					if err != nil {
+						bail(err)
+					}
+					fmt.Fprintf(os.Stderr, "Schema: %s\n", schemaStr)
 					var schema map[string]interface{}
 					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
 						bail(err)
@@ -205,8 +220,14 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					// The "namespace" field contains the table name
 					tableName := schema["namespace"].(string)
 					fmt.Fprintf(os.Stderr, "Table name: %s\n", tableName)
+					colNamesAggRedis, err = redisConn.Do("GET", tableName)
+					if err != nil {
+						bail(err)
+					}
 					// The "doc" field is assumed to contain a pipe-separated list of column names
-					tmpColNames := strings.Split(schema["doc"].(string), "|")
+					colNamesAgg := schema["doc"].(string)
+					fmt.Fprintf(os.Stderr, "colNames (schema): %s\ncolNames (Redis): %s\n", colNamesAgg, colNamesAggRedis)
+					tmpColNames := strings.Split(colNamesAgg, "|")
 					colNameToType = make(map[string]string)
 					fmt.Fprintf(os.Stderr, "colNames: %v\n", tmpColNames)
 					colsWithTypes := schema["fields"].([]interface{})
