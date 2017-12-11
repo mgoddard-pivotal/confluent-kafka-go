@@ -286,7 +286,10 @@ func avroToCsv (ocf *goavro.OCFReader) {
 		// Detect whether a field contains a delimiter, so needs to be quoted: strings.Contains(jsonValue, outputDelim)
 		jsonMap := make(map[string]string)
 		var f interface{}
-		err = json.Unmarshal(buf, &f)
+		//err = json.Unmarshal(buf, &f)
+		d := json.NewDecoder(strings.NewReader(string(buf)))
+   		d.UseNumber()
+   		err = d.Decode(&f)
 		if err != nil {
 			bail(err)
 		}
@@ -300,7 +303,8 @@ func avroToCsv (ocf *goavro.OCFReader) {
 					jsonMap[k] = fmt.Sprint(val)
 				}
 			  default:
-				 fmt.Println(k, "is of a type I don't know how to handle", vv) 
+				// This would be a non-null field
+				jsonMap[k] = fmt.Sprint(vv)
       		}
 		}
 		colVals := make([]string, len(colNames))
