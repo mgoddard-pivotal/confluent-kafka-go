@@ -23,13 +23,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/garyburd/redigo/redis"
 	"github.com/linkedin/goavro"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"github.com/garyburd/redigo/redis"
 )
 
 var (
@@ -41,9 +41,10 @@ var (
 	sigs         chan os.Signal
 	isAvro       = false
 	gpXid        = ""
-	outputDelim	 = ","
-	redisPort	 = 6379
-	redisConn 	 redis.Conn
+	gpSegmentId  = ""
+	outputDelim  = ","
+	redisPort    = 6379
+	redisConn    redis.Conn
 )
 
 var avroToSqlType = map[string]string{
@@ -59,6 +60,8 @@ var avroToSqlType = map[string]string{
 // These need to be accessible globally
 var colNames []string
 var colNameToType map[string]string
+
+const redisLockLifetimeMS int = 24 * 60 * 60 * 1000 // This is the lifetime of the Redis mutex for a DDL operation, in ms
 
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 	p, err := kafka.NewProducer(config)
@@ -145,7 +148,7 @@ func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 
 // TODO: Modify this for Avro
 func runConsumer(config *kafka.ConfigMap, topics []string) {
-	
+
 	c, err := kafka.NewConsumer(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create consumer: %s\n", err)
@@ -168,18 +171,18 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 		case ev := <-c.Events():
 			switch e := ev.(type) {
 			case kafka.AssignedPartitions:
-				fmt.Fprintf(os.Stderr, "%% %v\n", e)
+				fmt.Fprintf(os.Stderr, "AssignedPartitions %v\n", e)
 				c.Assign(e.Partitions)
 				partitionCnt = len(e.Partitions)
 				eofCnt = 0
 			case kafka.RevokedPartitions:
-				fmt.Fprintf(os.Stderr, "%% %v\n", e)
+				fmt.Fprintf(os.Stderr, "RevokedPartitions %v\n", e)
 				c.Unassign()
 				partitionCnt = 0
 				eofCnt = 0
 			case *kafka.Message:
 				if verbosity >= 2 {
-					fmt.Fprintf(os.Stderr, "%% %v:\n", e.TopicPartition)
+					fmt.Fprintf(os.Stderr, "Message %v:\n", e.TopicPartition)
 				}
 				if keyDelim != "" {
 					if e.Key != nil {
@@ -215,7 +218,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					tableName := schema["namespace"].(string)
 					fmt.Fprintf(os.Stderr, "Table name: %s\n", tableName)
 					var fromRedis interface{}
-					//colNamesAggRedis, err = redisConn.Do("GET", tableName)
 					fromRedis, err = redisConn.Do("GET", tableName)
 					if err != nil {
 						bail(err)
@@ -254,9 +256,22 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						fmt.Fprintf(os.Stderr, "Schema is consistent\n")
 					} else {
 						fmt.Fprintf(os.Stderr, "Schema must be updated\n")
+						// Set a lock in Redis
+						fromRedis, err = redisConn.Do("SET", gpXid, gpSegmentId, "NX", "PX", redisLockLifetimeMS)
+						if err != nil {
+							bail(err)
+						}
+						if fromRedis == nil {
+							fmt.Fprintf(os.Stderr, "FAILED to get lock -- quitting\n")
+						}
+						// Determine which columns need to be added, with their types
+
+						// Execute the required "ALTER TABLE ..." commands
+
+						// Exit (exiting here will not increment the offset for the topic in Kafka)
+						fmt.Fprintf(os.Stderr, "Exiting now.\n")
+						os.Exit(0)
 					}
-				 	// Exiting here will not increment the offset for the topic in Kafka
-					//os.Exit(1)
 					avroToCsv(ocf) // This prints the CSV version
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
@@ -284,8 +299,8 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 	fmt.Fprintf(os.Stderr, "%% Closing consumer\n")
 	c.Close()
 }
-	
-func avroToCsv (ocf *goavro.OCFReader) {
+
+func avroToCsv(ocf *goavro.OCFReader) {
 	//fmt.Fprintf(os.Stderr, "In avroToCsv\n")
 	codec := ocf.Codec()
 	for ocf.Scan() {
@@ -311,24 +326,24 @@ func avroToCsv (ocf *goavro.OCFReader) {
 		var f interface{}
 		//err = json.Unmarshal(buf, &f)
 		d := json.NewDecoder(strings.NewReader(string(buf)))
-   		d.UseNumber()
-   		err = d.Decode(&f)
+		d.UseNumber()
+		err = d.Decode(&f)
 		if err != nil {
 			bail(err)
 		}
 		m := f.(map[string]interface{})
 		for k, v := range m {
-		  switch vv := v.(type) {
-			  case string, float64, bool, int:
+			switch vv := v.(type) {
+			case string, float64, bool, int:
 				jsonMap[k] = fmt.Sprint(vv)
-			  case map[string]interface{}:
+			case map[string]interface{}:
 				for _, val := range vv {
 					jsonMap[k] = fmt.Sprint(val)
 				}
-			  default:
+			default:
 				// This would be a non-null field
 				jsonMap[k] = fmt.Sprint(vv)
-      		}
+			}
 		}
 		colVals := make([]string, len(colNames))
 		for i, v := range colNames {
@@ -402,9 +417,10 @@ func main() {
 	exitEOF = *exitEOFArg
 	isAvro = *avroArg
 	confargs.conf["bootstrap.servers"] = *brokers
-	
+
 	gpXid = os.Getenv("GP_XID")
-	fmt.Fprintf(os.Stderr, "partition: %d, GP_XID: %s\n", *partition, gpXid)
+	gpSegmentId = os.Getenv("GP_SEGMENT_ID")
+	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s", gpXid, gpSegmentId)
 
 	switch mode {
 	case "produce":
