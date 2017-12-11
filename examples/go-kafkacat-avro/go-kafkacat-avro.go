@@ -191,8 +191,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				// MIKE: Here's where we dump the message.
 				if isAvro {
 					if redisConn == nil {
-						//redisConn, err = redis.DialURL("redis://" + os.Getenv("GP_MASTER_HOST") + ":" + string(redisPort))
-						//redisConn, err = redis.DialURL("redis://localhost:6379")
 						redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
 						if err != nil {
 							bail(err)
@@ -208,10 +206,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					codec := ocf.Codec()
 					var schemaStr string
 					schemaStr = codec.Schema()
-					colNamesAggRedis, err := redisConn.Do("GET", schemaStr)
-					if err != nil {
-						bail(err)
-					}
 					fmt.Fprintf(os.Stderr, "Schema: %s\n", schemaStr)
 					var schema map[string]interface{}
 					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
@@ -220,10 +214,13 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					// The "namespace" field contains the table name
 					tableName := schema["namespace"].(string)
 					fmt.Fprintf(os.Stderr, "Table name: %s\n", tableName)
-					colNamesAggRedis, err = redisConn.Do("GET", tableName)
+					var fromRedis interface{}
+					//colNamesAggRedis, err = redisConn.Do("GET", tableName)
+					fromRedis, err = redisConn.Do("GET", tableName)
 					if err != nil {
 						bail(err)
 					}
+					colNamesAggRedis := fmt.Sprintf("%s", fromRedis)
 					// The "doc" field is assumed to contain a pipe-separated list of column names
 					colNamesAgg := schema["doc"].(string)
 					fmt.Fprintf(os.Stderr, "colNames (schema): %s\ncolNames (Redis): %s\n", colNamesAgg, colNamesAggRedis)
@@ -253,6 +250,11 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						colNameToType[colName.(string)] = colType
 					}
 					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
+					if strings.HasPrefix(colNamesAggRedis, colNamesAgg) {
+						fmt.Fprintf(os.Stderr, "Schema is consistent\n")
+					} else {
+						fmt.Fprintf(os.Stderr, "Schema must be updated\n")
+					}
 				 	// Exiting here will not increment the offset for the topic in Kafka
 					//os.Exit(1)
 					avroToCsv(ocf) // This prints the CSV version
