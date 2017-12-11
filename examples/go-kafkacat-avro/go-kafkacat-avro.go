@@ -226,9 +226,9 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					// The "doc" field is assumed to contain a pipe-separated list of column names
 					colNamesAgg := schema["doc"].(string)
 					fmt.Fprintf(os.Stderr, "colNames (schema): %s\ncolNames (Redis): %s\n", colNamesAgg, colNamesAggRedis)
-					tmpColNames := strings.Split(colNamesAgg, "|")
+					colNamesAvro := strings.Split(colNamesAgg, "|")
 					colNameToType = make(map[string]string)
-					fmt.Fprintf(os.Stderr, "colNames: %v\n", tmpColNames)
+					fmt.Fprintf(os.Stderr, "colNames: %v\n", colNamesAvro)
 					colsWithTypes := schema["fields"].([]interface{})
 					for _, val := range colsWithTypes {
 						colMeta := val.(map[string]interface{})
@@ -265,6 +265,20 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							fmt.Fprintf(os.Stderr, "FAILED to get lock -- quitting\n")
 						}
 						// Determine which columns need to be added, with their types
+						alterTable := ""
+						colNamesExisting := strings.Split(colNamesAggRedis, "|")
+						for i := len(colNamesExisting); i < len(colNamesAvro); i++ {
+							newColName := colNamesAvro[i]
+							newColAvroType := colNameToType[newColName]
+							newColSqlType := avroToSqlType[newColAvroType]
+							//fmt.Fprintf(os.Stderr, "Add column \"%s\"\n", newColName)
+							if len(alterTable) > 0 {
+								alterTable += ", "
+							}
+							alterTable += " ADD COLUMN " + newColName + " " + newColSqlType
+						}
+						alterTable = "ALTER TABLE " + tableName + " " + alterTable
+						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
 						// Execute the required "ALTER TABLE ..." commands
 
