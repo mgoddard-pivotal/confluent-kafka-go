@@ -41,6 +41,7 @@ var (
 	sigs         chan os.Signal
 	isAvro       = false
 	gpXid        = ""
+	outputDelim	 = ","
 )
 
 var avroToSqlType = map[string]string{
@@ -52,6 +53,10 @@ var avroToSqlType = map[string]string{
 	"bytes":   "BYTEA",
 	"string":  "TEXT",
 }
+
+// These need to be accessible globally
+var colNames []string
+var colNameToType map[string]string
 
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 	p, err := kafka.NewProducer(config)
@@ -202,8 +207,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					fmt.Fprintf(os.Stderr, "Table name: %s\n", tableName)
 					// The "doc" field is assumed to contain a pipe-separated list of column names
 					tmpColNames := strings.Split(schema["doc"].(string), "|")
-					colNames := make([]string, len(tmpColNames))
-					colNameToType := make(map[string]string)
+					colNameToType = make(map[string]string)
 					fmt.Fprintf(os.Stderr, "colNames: %v\n", tmpColNames)
 					colsWithTypes := schema["fields"].([]interface{})
 					for _, val := range colsWithTypes {
@@ -228,6 +232,8 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						colNameToType[colName.(string)] = colType
 					}
 					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
+				 	// Exiting here will not increment the offset for the topic in Kafka
+					//os.Exit(1)
 					avroToCsv(ocf) // This prints the CSV version
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
@@ -272,8 +278,46 @@ func avroToCsv (ocf *goavro.OCFReader) {
 			continue
 		}
 		// HERE: buf contains a single line of JSON, a single JSON document
-		// {"id":10022459,"description":{"string":"DOMESTIC BATTERY SIMPLE"},"community_area":{"string":"24"} ... }
-		fmt.Println(string(buf))
+		// NOTE now the "id" field differs (it's not nullable)
+		//
+		// {"description":{"string":"SIMPLE"},"domestic":{"boolean":false},"x_coord":{"float":1.1542e+06},"id":10035257, ... }
+		//
+		// Delimiter: outputDelim (",")
+		// Detect whether a field contains a delimiter, so needs to be quoted: strings.Contains(jsonValue, outputDelim)
+		jsonMap := make(map[string]string)
+		var f interface{}
+		err = json.Unmarshal(buf, &f)
+		if err != nil {
+			bail(err)
+		}
+		m := f.(map[string]interface{})
+		for k, v := range m {
+		  switch vv := v.(type) {
+			  case string, float64, bool, int:
+				jsonMap[k] = fmt.Sprint(vv)
+			  case map[string]interface{}:
+				for _, val := range vv {
+					jsonMap[k] = fmt.Sprint(val)
+				}
+			  default:
+				 fmt.Println(k, "is of a type I don't know how to handle", vv) 
+      		}
+		}
+		colVals := make([]string, len(colNames))
+		for i, v := range colNames {
+			val, ok := jsonMap[v]
+			if ok {
+				if strings.Contains(val, outputDelim) {
+					colVals[i] = "\"" + val + "\""
+				} else {
+					colVals[i] = val
+				}
+			} else {
+				colVals[i] = ""
+			}
+		}
+		//fmt.Println(string(buf))
+		fmt.Println(strings.Join(colVals, outputDelim))
 	}
 }
 
