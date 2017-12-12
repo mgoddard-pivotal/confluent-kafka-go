@@ -27,7 +27,7 @@ import (
 	"github.com/garyburd/redigo/redis"
 	_ "github.com/lib/pq"
 	"github.com/linkedin/goavro"
-	"gopkg.in/alecthomas/kingpin.v2"
+	kingpin "gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
 	"strings"
