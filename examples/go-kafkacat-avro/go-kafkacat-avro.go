@@ -503,7 +503,7 @@ func main() {
 		if err != nil {
 			bail(err)
 		} else {
-			fmt.Fprintf(os.Stderr, "Connected to GPDB (host: %s, port: %s, DB: %s", gpMasterHost, gpMasterPort, gpDatabase)
+			fmt.Fprintf(os.Stderr, "Connected to GPDB (host: %s, port: %s, DB: %s)\n", gpMasterHost, gpMasterPort, gpDatabase)
 		}
 	}
 
