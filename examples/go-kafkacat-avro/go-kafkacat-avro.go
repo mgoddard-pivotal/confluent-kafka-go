@@ -193,13 +193,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				// MIKE: Here's where we dump the message.
 				if isAvro {
-					if redisConn == nil {
-						redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
-						if err != nil {
-							bail(err)
-						}
-						defer redisConn.Close()
-					}
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
@@ -283,6 +276,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						// Execute the required "ALTER TABLE ..." commands
 
 						// Exit (exiting here will not increment the offset for the topic in Kafka)
+						// FIXME: exiting here will not update the offset for already consumed data!
 						fmt.Fprintf(os.Stderr, "Exiting now.\n")
 						os.Exit(0)
 					}
@@ -377,6 +371,15 @@ func avroToCsv(ocf *goavro.OCFReader) {
 	}
 }
 
+// Return true if there's a lock; false if not
+func redisLockExists () bool {
+	fromRedis, err := redisConn.Do("GET", gpXid)
+	if err != nil {
+		bail(err)
+	}
+	return fromRedis != nil
+}
+
 type configArgs struct {
 	conf kafka.ConfigMap
 }
@@ -434,7 +437,23 @@ func main() {
 
 	gpXid = os.Getenv("GP_XID")
 	gpSegmentId = os.Getenv("GP_SEGMENT_ID")
-	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s", gpXid, gpSegmentId)
+	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s\n", gpXid, gpSegmentId)
+
+	if isAvro {
+		var err error
+		if redisConn == nil {
+			redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
+			if err != nil {
+				bail(err)
+			}
+			defer redisConn.Close()
+		}
+		// Quit immediately if some peer process is updating the DDL for the table
+		if redisLockExists() {
+			fmt.Fprintf(os.Stderr, "Lock exists in Redis -- quitting\n")
+			os.Exit(0)
+		}
+	}
 
 	switch mode {
 	case "produce":
