@@ -275,7 +275,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							if len(alterTable) > 0 {
 								alterTable += ", "
 							}
-							alterTable += " ADD COLUMN " + newColName + " " + newColSqlType
+							alterTable += "ADD COLUMN " + newColName + " " + newColSqlType
 						}
 						alterTable = "ALTER TABLE " + tableName + " " + alterTable
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
