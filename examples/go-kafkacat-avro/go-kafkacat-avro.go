@@ -20,6 +20,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"database/sql"
+	_ "github.com/lib/pq"
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -42,9 +44,13 @@ var (
 	isAvro       = false
 	gpXid        = ""
 	gpSegmentId  = ""
+	gpMasterHost = ""
+	gpMasterPort = ""
+	gpDatabase   = ""
 	outputDelim  = ","
 	redisPort    = 6379
 	redisConn    redis.Conn
+	gpdbConn     *sql.DB
 )
 
 var avroToSqlType = map[string]string{
@@ -191,8 +197,16 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						fmt.Printf("%s", keyDelim)
 					}
 				}
-				// MIKE: Here's where we dump the message.
 				if isAvro {
+					/*
+					TODO: What is the best way to handle the case where some data has been pulled out of Kafka, but
+					another process is making DDL changes?  Need to ensure that the offsets are updated appropriately,
+					but that this current Kafka message is available the next time this program runs.
+					*/
+					if redisLockExists() {
+						fmt.Fprintf(os.Stderr, "Lock exists in Redis -- quitting\n")
+						os.Exit(0)
+					}
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
@@ -274,6 +288,23 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
 						// Execute the required "ALTER TABLE ..." commands
+						_, err = gpdbConn.Exec(alterTable)
+						if err != nil {
+							bail(err)
+						} else {
+							fmt.Fprintf(os.Stderr, "SUCCESSFULLY ran that DDL\n")
+						}
+
+						// Update Redis with the new colNamesAgg value
+						fromRedis, err = redisConn.Do("SET", tableName, colNamesAgg)
+						if err != nil {
+							bail(err)
+						}
+						if fromRedis == nil {
+							fmt.Fprintf(os.Stderr,"FAILED to update column names for table \"%s\"\n", tableName)
+						} else {
+							fmt.Fprintf(os.Stderr,"SUCCEEDED in updating column names for table \"%s\"\n", tableName)
+						}
 
 						// Exit (exiting here will not increment the offset for the topic in Kafka)
 						// FIXME: exiting here will not update the offset for already consumed data!
@@ -435,12 +466,17 @@ func main() {
 	isAvro = *avroArg
 	confargs.conf["bootstrap.servers"] = *brokers
 
+	// All these are present within the external web table environment of GPDB segment hosts
 	gpXid = os.Getenv("GP_XID")
 	gpSegmentId = os.Getenv("GP_SEGMENT_ID")
+	gpMasterHost = os.Getenv("GP_MASTER_HOST")
+	gpMasterPort = os.Getenv("GP_MASTER_PORT")
+	gpDatabase = os.Getenv("GP_DATABASE")
 	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s\n", gpXid, gpSegmentId)
 
 	if isAvro {
 		var err error
+		// Connect to Redis
 		if redisConn == nil {
 			redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
 			if err != nil {
@@ -452,6 +488,22 @@ func main() {
 		if redisLockExists() {
 			fmt.Fprintf(os.Stderr, "Lock exists in Redis -- quitting\n")
 			os.Exit(0)
+		}
+		// Connect to GPDB master
+		// Ref:
+		// https://godoc.org/github.com/lib/pq
+		// http://go-database-sql.org/accessing.html
+		connStr := fmt.Sprintf("postgres://gpadmin:password@%s:%s/%s?sslmode=disable", gpMasterHost, gpMasterPort, gpDatabase)
+		gpdbConn, err = sql.Open("postgres", connStr)
+		if err != nil {
+			bail(err)
+		}
+		defer gpdbConn.Close()
+		err = gpdbConn.Ping()
+		if err != nil {
+			bail(err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Connected to GPDB (host: %s, port: %s, DB: %s", gpMasterHost, gpMasterPort, gpDatabase)
 		}
 	}
 
