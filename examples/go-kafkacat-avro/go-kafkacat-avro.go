@@ -21,11 +21,11 @@ import (
 	"bufio"
 	"bytes"
 	"database/sql"
-	_ "github.com/lib/pq"
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/garyburd/redigo/redis"
+	_ "github.com/lib/pq"
 	"github.com/linkedin/goavro"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
@@ -72,8 +72,7 @@ const redisLockLifetimeMS int = 24 * 60 * 60 * 1000 // This is the lifetime of t
 func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 	p, err := kafka.NewProducer(config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create producer: %s\n", err)
-		os.Exit(1)
+		exitWithMessage(fmt.Sprintf("Failed to create producer: %s\n", err), 1)
 	}
 
 	fmt.Fprintf(os.Stderr, "Created Producer %v, topic %s [%d]\n", p, topic, partition)
@@ -157,8 +156,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 
 	c, err := kafka.NewConsumer(config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create consumer: %s\n", err)
-		os.Exit(1)
+		exitWithMessage(fmt.Sprintf("Failed to create consumer: %s\n", err), 1)
 	}
 
 	fmt.Fprintf(os.Stderr, "%% Created Consumer %v\n", c)
@@ -199,19 +197,18 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 				}
 				if isAvro {
 					/*
-					TODO: What is the best way to handle the case where some data has been pulled out of Kafka, but
-					another process is making DDL changes?  Need to ensure that the offsets are updated appropriately,
-					but that this current Kafka message is available the next time this program runs.
+						TODO: What is the best way to handle the case where some data has been pulled out of Kafka, but
+						another process is making DDL changes?  Need to ensure that the offsets are updated appropriately,
+						but that this current Kafka message is available the next time this program runs.
 					*/
 					if redisLockExists() {
-						fmt.Fprintf(os.Stderr, "Lock exists in Redis -- quitting\n")
-						os.Exit(0)
+						exitWithMessage("Lock exists in Redis -- quitting", 0)
 					}
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
 					if err != nil {
-						bail(err)
+						exitWithError(err)
 					}
 					codec := ocf.Codec()
 					var schemaStr string
@@ -219,7 +216,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					fmt.Fprintf(os.Stderr, "Schema: %s\n", schemaStr)
 					var schema map[string]interface{}
 					if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
-						bail(err)
+						exitWithError(err)
 					}
 					// The "namespace" field contains the table name
 					tableName := schema["namespace"].(string)
@@ -227,7 +224,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					var fromRedis interface{}
 					fromRedis, err = redisConn.Do("GET", tableName)
 					if err != nil {
-						bail(err)
+						exitWithError(err)
 					}
 					colNamesAggRedis := fmt.Sprintf("%s", fromRedis)
 					// The "doc" field is assumed to contain a pipe-separated list of column names
@@ -258,7 +255,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						}
 						colNameToType[colName.(string)] = colType
 					}
-					fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
+					//fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
 					if strings.HasPrefix(colNamesAggRedis, colNamesAgg) {
 						fmt.Fprintf(os.Stderr, "Schema is consistent\n")
 					} else {
@@ -266,7 +263,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						// Set a lock in Redis
 						fromRedis, err = redisConn.Do("SET", gpXid, gpSegmentId, "NX", "PX", redisLockLifetimeMS)
 						if err != nil {
-							bail(err)
+							exitWithError(err)
 						}
 						if fromRedis == nil {
 							fmt.Fprintf(os.Stderr, "FAILED to get lock -- quitting\n")
@@ -290,7 +287,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						// Execute the required "ALTER TABLE ..." commands
 						_, err = gpdbConn.Exec(alterTable)
 						if err != nil {
-							bail(err)
+							exitWithError(err)
 						} else {
 							fmt.Fprintf(os.Stderr, "SUCCESSFULLY ran that DDL\n")
 						}
@@ -298,18 +295,15 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						// Update Redis with the new colNamesAgg value
 						fromRedis, err = redisConn.Do("SET", tableName, colNamesAgg)
 						if err != nil {
-							bail(err)
+							exitWithError(err)
 						}
 						if fromRedis == nil {
-							fmt.Fprintf(os.Stderr,"FAILED to update column names for table \"%s\"\n", tableName)
+							fmt.Fprintf(os.Stderr, "FAILED to update column names for table \"%s\"\n", tableName)
 						} else {
-							fmt.Fprintf(os.Stderr,"SUCCEEDED in updating column names for table \"%s\"\n", tableName)
+							fmt.Fprintf(os.Stderr, "SUCCEEDED in updating column names for table \"%s\"\n", tableName)
 						}
-
-						// Exit (exiting here will not increment the offset for the topic in Kafka)
-						// FIXME: exiting here will not update the offset for already consumed data!
-						fmt.Fprintf(os.Stderr, "Exiting now.\n")
-						os.Exit(0)
+						// FIXME: exiting here will not update the Kafka topic's offset for already consumed data.
+						exitWithMessage("Exiting after the DDL operation", 0)
 					}
 					avroToCsv(ocf) // This prints the CSV version
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
@@ -368,7 +362,7 @@ func avroToCsv(ocf *goavro.OCFReader) {
 		d.UseNumber()
 		err = d.Decode(&f)
 		if err != nil {
-			bail(err)
+			exitWithError(err)
 		}
 		m := f.(map[string]interface{})
 		for k, v := range m {
@@ -403,10 +397,10 @@ func avroToCsv(ocf *goavro.OCFReader) {
 }
 
 // Return true if there's a lock; false if not
-func redisLockExists () bool {
+func redisLockExists() bool {
 	fromRedis, err := redisConn.Do("GET", gpXid)
 	if err != nil {
-		bail(err)
+		exitWithError(err)
 	}
 	return fromRedis != nil
 }
@@ -480,14 +474,13 @@ func main() {
 		if redisConn == nil {
 			redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
 			if err != nil {
-				bail(err)
+				exitWithError(err)
 			}
 			defer redisConn.Close()
 		}
 		// Quit immediately if some peer process is updating the DDL for the table
 		if redisLockExists() {
-			fmt.Fprintf(os.Stderr, "Lock exists in Redis -- quitting\n")
-			os.Exit(0)
+			exitWithMessage("Exiting due to a Redis lock for this GP_XID (another process is executing DDL)", 0)
 		}
 		// Connect to GPDB master
 		// Ref:
@@ -496,12 +489,12 @@ func main() {
 		connStr := fmt.Sprintf("postgres://gpadmin:password@%s:%s/%s?sslmode=disable", gpMasterHost, gpMasterPort, gpDatabase)
 		gpdbConn, err = sql.Open("postgres", connStr)
 		if err != nil {
-			bail(err)
+			exitWithError(err)
 		}
 		defer gpdbConn.Close()
 		err = gpdbConn.Ping()
 		if err != nil {
-			bail(err)
+			exitWithError(err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Connected to GPDB (host: %s, port: %s, DB: %s)\n", gpMasterHost, gpMasterPort, gpDatabase)
 		}
@@ -522,7 +515,26 @@ func main() {
 
 }
 
-func bail(err error) {
+// Close any open GPDB, Redis, (other?) connections
+func closeConnections() {
+	if redisConn != nil {
+		redisConn.Close()
+		redisConn = nil
+	}
+	if gpdbConn != nil {
+		gpdbConn.Close()
+		gpdbConn = nil
+	}
+}
+
+func exitWithMessage(msg string, exitCode int) {
+	fmt.Fprintf(os.Stderr, "%s\n", msg)
+	closeConnections()
+	os.Exit(exitCode)
+}
+
+func exitWithError(err error) {
 	fmt.Fprintf(os.Stderr, "%s\n", err)
+	closeConnections()
 	os.Exit(1)
 }
