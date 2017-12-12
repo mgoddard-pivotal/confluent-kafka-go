@@ -26,7 +26,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/garyburd/redigo/redis"
 	_ "github.com/lib/pq"
-	"github.com/linkedin/goavro"
+	goavro "github.com/mgoddard-pivotal/goavro"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
