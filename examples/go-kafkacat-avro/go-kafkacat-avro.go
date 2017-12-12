@@ -239,6 +239,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					colNameToType = make(map[string]string)
 					//fmt.Fprintf(os.Stderr, "colNames: %v\n", colNamesAvro)
 					colsWithTypes := schema["fields"].([]interface{})
+					colNames = nil
 					for _, val := range colsWithTypes {
 						colMeta := val.(map[string]interface{})
 						colName := colMeta["name"]
