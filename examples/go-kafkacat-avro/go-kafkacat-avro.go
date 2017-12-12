@@ -207,8 +207,13 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					// Get access to the Avro schema
 					ior := bytes.NewReader(e.Value)
 					ocf, err := goavro.NewOCFReader(ior)
+					// This is producing a few of these messages, resulting in leaving messages in the queue:
+					// cannot create OCFReader: cannot read OCF header with invalid avro.schema: Record ought to have valid name: \
+					//   schema name ought to start with [A-Za-z_]: 1
 					if err != nil {
-						exitWithError(err)
+						//exitWithError(err)
+						fmt.Fprintf(os.Stderr, "ERROR at goavro.NewOCFReader: %s (IGNORING THE OFFENDING KAFKA VALUE)\n", err)
+						break
 					}
 					codec := ocf.Codec()
 					var schemaStr string
@@ -232,7 +237,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					fmt.Fprintf(os.Stderr, "colNames (schema): %s\ncolNames (Redis): %s\n", colNamesAgg, colNamesAggRedis)
 					colNamesAvro := strings.Split(colNamesAgg, "|")
 					colNameToType = make(map[string]string)
-					fmt.Fprintf(os.Stderr, "colNames: %v\n", colNamesAvro)
+					//fmt.Fprintf(os.Stderr, "colNames: %v\n", colNamesAvro)
 					colsWithTypes := schema["fields"].([]interface{})
 					for _, val := range colsWithTypes {
 						colMeta := val.(map[string]interface{})
@@ -468,7 +473,7 @@ func main() {
 	gpDatabase = os.Getenv("GP_DATABASE")
 	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s\n", gpXid, gpSegmentId)
 
-	if isAvro {
+	if isAvro == true {
 		var err error
 		// Connect to Redis
 		if redisConn == nil {
