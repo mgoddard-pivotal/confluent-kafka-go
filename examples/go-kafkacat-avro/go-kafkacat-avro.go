@@ -288,18 +288,15 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							alterTable += "ADD COLUMN " + newColName + " " + newColSqlType
 						}
 						alterTable = "ALTER TABLE " + tableName + " " + alterTable
-
-						/*
-						PROBLEM: 3 processes ran this simultaneously:
-
-						[gpadmin@avro-drift-demo ~]$ grep 'DDL: ' kafka_consumer_0*.log
-	kafka_consumer_01.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
-	kafka_consumer_02.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
-	kafka_consumer_03.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
-						 */
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
 						// Execute the required "ALTER TABLE ..." commands
+						// FIXME: this just sits and blocks (table is locked?)
+						/*
+						TODO:
+						Probably, need to throw the DDL into a Redis queue and have that executed independently,
+						via the same script which drives this periodic load process.
+						*/
 						_, err = gpdbConn.Exec(alterTable)
 						if err != nil {
 							exitWithError(err)
