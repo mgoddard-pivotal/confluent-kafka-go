@@ -272,7 +272,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							exitWithError(err)
 						}
 						if fromRedis == nil {
-							fmt.Fprintf(os.Stderr, "FAILED to get lock -- quitting\n")
+							exitWithMessage("FAILED to get lock -- quitting", 0)
 						}
 						// Determine which columns need to be added, with their types
 						alterTable := ""
@@ -288,6 +288,15 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							alterTable += "ADD COLUMN " + newColName + " " + newColSqlType
 						}
 						alterTable = "ALTER TABLE " + tableName + " " + alterTable
+
+						/*
+						PROBLEM: 3 processes ran this simultaneously:
+
+						[gpadmin@avro-drift-demo ~]$ grep 'DDL: ' kafka_consumer_0*.log
+	kafka_consumer_01.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
+	kafka_consumer_02.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
+	kafka_consumer_03.log:DDL: ALTER TABLE public.crimes ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT
+						 */
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
 						// Execute the required "ALTER TABLE ..." commands
