@@ -290,32 +290,34 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						alterTable = "ALTER TABLE " + tableName + " " + alterTable
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
-						// Execute the required "ALTER TABLE ..." commands
-						// FIXME: this just sits and blocks (table is locked?)
 						/*
 						TODO:
 						Probably, need to throw the DDL into a Redis queue and have that executed independently,
-						via the same script which drives this periodic load process.
+						via the same script which drives this periodic load process.  Just put this in with key
+						tableName + "-" + "DDL".
+
+						Along with that DDL to alter the heap table, this other process will need to alter the external
+						table corresponding to the heap table.  Adopt the convention that this table's name is the same
+						as the heap table, with "_kafka" appended.  Here's what that ALTER TABLE would look like:
+
+						ALTER EXTERNAL TABLE public.crimes_kafka ADD COLUMN crime_year INT, ADD COLUMN record_update_date TEXT;
+
 						*/
-						_, err = gpdbConn.Exec(alterTable)
-						if err != nil {
-							exitWithError(err)
-						} else {
-							fmt.Fprintf(os.Stderr, "SUCCESSFULLY ran that DDL\n")
-						}
 
 						// Update Redis with the new colNamesAgg value
-						fromRedis, err = redisConn.Do("SET", tableName, colNamesAgg)
+						ddlKey := tableName + "-DDL"
+						fromRedis, err = redisConn.Do("SET", ddlKey, alterTable)
+						fmt.Fprintf(os.Stderr, "Redis: SET %s \"%s\"\n", ddlKey, alterTable)
 						if err != nil {
 							exitWithError(err)
 						}
+						status := "SUCCEEDED"
 						if fromRedis == nil {
-							fmt.Fprintf(os.Stderr, "FAILED to update column names for table \"%s\"\n", tableName)
-						} else {
-							fmt.Fprintf(os.Stderr, "SUCCEEDED in updating column names for table \"%s\"\n", tableName)
+							status = "FAILED"
 						}
+						fmt.Fprintf(os.Stderr, "%s\n", status)
 						// FIXME: exiting here will not update the Kafka topic's offset for already consumed data.
-						exitWithMessage("Exiting after the DDL operation", 0)
+						exitWithMessage("Exiting after setting the DDL in Redis", 0)
 					}
 					avroToCsv(ocf) // This prints the CSV version
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
