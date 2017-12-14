@@ -75,6 +75,10 @@ ALTER EXTERNAL TABLE public.crimes_kafka ADD COLUMN crime_year INT, ADD COLUMN r
 	if err != nil {
 		exitWithError(err)
 	}
+	if fromRedis == nil {
+		exitWithMessage("No DDL Found for key \"" + ddlKey + "\"", 0)
+	}
+
 	ddl := fmt.Sprintf("%s", fromRedis)
 
 	// Execute the required "ALTER TABLE ..." commands
