@@ -20,12 +20,10 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/garyburd/redigo/redis"
-	_ "github.com/lib/pq"
 	goavro "github.com/mgoddard-pivotal/goavro"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 	"os"
@@ -50,7 +48,6 @@ var (
 	outputDelim  = ","
 	redisPort    = 6379
 	redisConn    redis.Conn
-	gpdbConn     *sql.DB
 )
 
 var avroToSqlType = map[string]string{
@@ -496,22 +493,6 @@ func main() {
 		if redisLockExists() {
 			exitWithMessage("Exiting due to a Redis lock for this GP_XID (another process is executing DDL)", 0)
 		}
-		// Connect to GPDB master
-		// Ref:
-		// https://godoc.org/github.com/lib/pq
-		// http://go-database-sql.org/accessing.html
-		connStr := fmt.Sprintf("postgres://gpadmin:password@%s:%s/%s?sslmode=disable", gpMasterHost, gpMasterPort, gpDatabase)
-		gpdbConn, err = sql.Open("postgres", connStr)
-		if err != nil {
-			exitWithError(err)
-		}
-		defer gpdbConn.Close()
-		err = gpdbConn.Ping()
-		if err != nil {
-			exitWithError(err)
-		} else {
-			fmt.Fprintf(os.Stderr, "Connected to GPDB (host: %s, port: %s, DB: %s)\n", gpMasterHost, gpMasterPort, gpDatabase)
-		}
 	}
 
 	switch mode {
@@ -534,10 +515,6 @@ func closeConnections() {
 	if redisConn != nil {
 		redisConn.Close()
 		redisConn = nil
-	}
-	if gpdbConn != nil {
-		gpdbConn.Close()
-		gpdbConn = nil
 	}
 }
 
