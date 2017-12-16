@@ -48,6 +48,8 @@ var (
 	outputDelim  = ","
 	redisPort    = 6379
 	redisConn    redis.Conn
+	nColsTable = -1
+	nColsAvro = -1
 )
 
 var avroToSqlType = map[string]string{
@@ -231,6 +233,11 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					colNamesAggRedis := fmt.Sprintf("%s", fromRedis)
 					// The "doc" field is assumed to contain a pipe-separated list of column names
 					colNamesAgg := schema["doc"].(string)
+
+					// Need to accommodate the case where the target table is wider than the data
+					nColsTable = strings.Count(colNamesAggRedis, "|")
+					nColsAvro = strings.Count(colNamesAgg, "|")
+
 					fmt.Fprintf(os.Stderr, "colNames (schema): %s\ncolNames (Redis): %s\n", colNamesAgg, colNamesAggRedis)
 					colNamesAvro := strings.Split(colNamesAgg, "|")
 					colNameToType = make(map[string]string)
@@ -403,7 +410,11 @@ func avroToCsv(ocf *goavro.OCFReader) {
 			}
 		}
 		//fmt.Println(string(buf))
-		fmt.Println(strings.Join(colVals, outputDelim))
+		extraCols := ""
+		for i := 0; i < (nColsTable - nColsAvro); i++ {
+			extraCols += outputDelim
+		}
+		fmt.Println(strings.Join(colVals, outputDelim) + extraCols)
 	}
 }
 
