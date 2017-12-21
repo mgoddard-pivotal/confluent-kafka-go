@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/garyburd/redigo/redis"
-	goavro "github.com/mgoddard-pivotal/goavro"
+	"github.com/mgoddard-pivotal/goavro"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
@@ -195,11 +195,6 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					}
 				}
 				if isAvro {
-					/*
-						TODO: What is the best way to handle the case where some data has been pulled out of Kafka, but
-						another process is making DDL changes?  Need to ensure that the offsets are updated appropriately,
-						but that this current Kafka message is available the next time this program runs.
-					*/
 					if redisLockExists() {
 						exitWithMessage("Lock exists in Redis -- quitting", 0)
 					}
@@ -324,6 +319,7 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						exitWithMessage("Exiting after setting the DDL in Redis", 0)
 					}
 					avroToCsv(ocf) // This prints the CSV version
+					c.Commit() /* Handle commits manually */
 					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
@@ -512,9 +508,11 @@ func main() {
 		runProducer((*kafka.ConfigMap)(&confargs.conf), *topic, int32(*partition))
 
 	case "consume":
+		// TODO: See https://docs.confluent.io/current/clients/consumer.html#synchronous-commits
 		confargs.conf["group.id"] = *group
 		confargs.conf["go.events.channel.enable"] = true
 		confargs.conf["go.application.rebalance.enable"] = true
+		confargs.conf["enable.auto.commit"] = !isAvro // If is Avro, then false (manually commit offsets)
 		confargs.conf["default.topic.config"] = kafka.ConfigMap{"auto.offset.reset": *initialOffset}
 		runConsumer((*kafka.ConfigMap)(&confargs.conf), *topics)
 	}
