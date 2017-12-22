@@ -48,6 +48,7 @@ var (
 	redisConn    redis.Conn
 	nColsTable = -1
 	nColsAvro = -1
+	c *kafka.Consumer
 )
 
 var avroToSqlType = map[string]string{
@@ -151,7 +152,8 @@ func runProducer(config *kafka.ConfigMap, topic string, partition int32) {
 // TODO: Modify this for Avro
 func runConsumer(config *kafka.ConfigMap, topics []string) {
 
-	c, err := kafka.NewConsumer(config)
+	var err error
+	c, err = kafka.NewConsumer(config)
 	if err != nil {
 		exitWithMessage(fmt.Sprintf("Failed to create consumer: %s\n", err), 1)
 	}
@@ -521,6 +523,10 @@ func closeConnections() {
 	if redisConn != nil {
 		redisConn.Close()
 		redisConn = nil
+	}
+	if c != nil {
+		c.Close()
+		c = nil
 	}
 }
 
