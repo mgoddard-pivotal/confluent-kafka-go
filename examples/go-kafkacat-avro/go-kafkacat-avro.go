@@ -290,8 +290,8 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						fmt.Fprintf(os.Stderr, "DDL: %s\n", alterTable)
 
 						/*
-						TODO:
-						Probably, need to throw the DDL into a Redis queue and have that executed independently,
+
+						Throw the DDL into a Redis queue and have that executed independently,
 						via the same script which drives this periodic load process.  Just put this in with key
 						tableName + "-" + "DDL".
 
@@ -315,11 +315,10 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 							status = "FAILED"
 						}
 						fmt.Fprintf(os.Stderr, "%s\n", status)
-						// FIXME: exiting here will not update the Kafka topic's offset for already consumed data.
 						exitWithMessage("Exiting after setting the DDL in Redis", 0)
 					}
 					avroToCsv(ocf) // This prints the CSV version
-					c.Commit() // Handle commits manually.  FIXME: find out where else this needs to be called.
+					c.Commit() // Handle commits manually.
 					fmt.Fprint(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
@@ -371,7 +370,6 @@ func avroToCsv(ocf *goavro.OCFReader) {
 		// Detect whether a field contains a delimiter, so needs to be quoted: strings.Contains(jsonValue, outputDelim)
 		jsonMap := make(map[string]string)
 		var f interface{}
-		//err = json.Unmarshal(buf, &f)
 		d := json.NewDecoder(strings.NewReader(string(buf)))
 		d.UseNumber()
 		err = d.Decode(&f)
