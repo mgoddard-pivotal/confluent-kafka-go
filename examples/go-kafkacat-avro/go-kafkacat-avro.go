@@ -25,7 +25,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/garyburd/redigo/redis"
 	"github.com/mgoddard-pivotal/goavro"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
 	"strings"
@@ -43,8 +43,6 @@ var (
 	gpXid        = ""
 	gpSegmentId  = ""
 	gpMasterHost = ""
-	gpMasterPort = ""
-	gpDatabase   = ""
 	outputDelim  = ","
 	redisPort    = 6379
 	redisConn    redis.Conn
@@ -262,9 +260,9 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 					}
 					//fmt.Fprintf(os.Stderr, "colNameToType: %v, colNames: %v\n", colNameToType, colNames)
 					if strings.HasPrefix(colNamesAggRedis, colNamesAgg) {
-						fmt.Fprintf(os.Stderr, "Schema is consistent\n")
+						fmt.Fprint(os.Stderr, "Schema is consistent\n")
 					} else {
-						fmt.Fprintf(os.Stderr, "Schema must be updated\n")
+						fmt.Fprint(os.Stderr, "Schema must be updated\n")
 						// Set a lock in Redis
 						fromRedis, err = redisConn.Do("SET", gpXid, gpSegmentId, "NX", "PX", redisLockLifetimeMS)
 						if err != nil {
@@ -319,8 +317,8 @@ func runConsumer(config *kafka.ConfigMap, topics []string) {
 						exitWithMessage("Exiting after setting the DDL in Redis", 0)
 					}
 					avroToCsv(ocf) // This prints the CSV version
-					c.Commit() /* Handle commits manually */
-					fmt.Fprintf(os.Stderr, "Wrote Avro message\n")
+					c.Commit() // Handle commits manually.  FIXME: find out where else this needs to be called.
+					fmt.Fprint(os.Stderr, "Wrote Avro message\n")
 				} else {
 					fmt.Println(string(e.Value))
 				}
@@ -482,15 +480,13 @@ func main() {
 	gpXid = os.Getenv("GP_XID")
 	gpSegmentId = os.Getenv("GP_SEGMENT_ID")
 	gpMasterHost = os.Getenv("GP_MASTER_HOST")
-	gpMasterPort = os.Getenv("GP_MASTER_PORT")
-	gpDatabase = os.Getenv("GP_DATABASE")
 	fmt.Fprintf(os.Stderr, "GP_XID: %s\nGP_SEGMENT_ID: %s\n", gpXid, gpSegmentId)
 
 	if isAvro == true {
 		var err error
 		// Connect to Redis
 		if redisConn == nil {
-			redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", os.Getenv("GP_MASTER_HOST"), redisPort))
+			redisConn, err = redis.DialURL(fmt.Sprintf("redis://%s:%d", gpMasterHost, redisPort))
 			if err != nil {
 				exitWithError(err)
 			}
@@ -512,7 +508,8 @@ func main() {
 		confargs.conf["group.id"] = *group
 		confargs.conf["go.events.channel.enable"] = true
 		confargs.conf["go.application.rebalance.enable"] = true
-		confargs.conf["enable.auto.commit"] = !isAvro // If is Avro, then false (manually commit offsets)
+		confargs.conf["enable.auto.commit"] = !isAvro // If isAvro, then false (manually commit offsets)
+		confargs.conf["auto.commit.interval.ms"] = 0 // 0 => disable
 		confargs.conf["default.topic.config"] = kafka.ConfigMap{"auto.offset.reset": *initialOffset}
 		runConsumer((*kafka.ConfigMap)(&confargs.conf), *topics)
 	}
